@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use bitcoin::{Address, Transaction};
 use lightning_invoice::Invoice;
@@ -9,6 +10,7 @@ use thiserror::Error;
 use minimint::config::ClientConfig;
 use minimint::modules::mint::tiered::coins::Coins;
 use minimint::modules::wallet::txoproof::{PegInProofError, TxOutProof};
+use minimint::outcome::TransactionStatus;
 use minimint::transaction as mint_tx;
 use minimint::transaction::{Output, TransactionItem};
 use minimint_api::db::batch::DbBatch;
@@ -322,6 +324,28 @@ impl MintClient {
 
         self.db.apply_batch(batch).expect("DB error");
         Ok(txid)
+    }
+
+    /// Fetches the TransactionStatus for a txid
+    /// Polling should *only* be set to true if it is anticipated that the txid is valid but has not yet been processed
+    pub async fn fetch_tx_outcome(&self, tx : TransactionId, polling : bool) -> Result<TransactionStatus, ClientError> {
+        //did not choose to use the MintClientError is_retryable logic because the 404 error should normaly
+        //not be retryable just in this specific case...
+        let status;
+        loop {
+            match self.api.fetch_tx_outcome(tx).await {
+                Ok(s) => {
+                    status = s;
+                    break;
+                }
+                Err(_e) if polling => {
+                    tokio::time::sleep(Duration::from_secs(1)).await
+                }
+                Err(e) => return Err(ClientError::MintApiError(e)),
+            }
+        }
+        Ok(status)
+
     }
 }
 
