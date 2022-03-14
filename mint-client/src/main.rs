@@ -9,10 +9,11 @@ use mint_client::mint::SpendableCoin;
 use mint_client::MintClient;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
+//use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
-use structopt::StructOpt;
+//use structopt::StructOpt;
+use clap::StructOpt;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -78,7 +79,7 @@ async fn main() {
         )
         .init();
 
-    let opts: Options = StructOpt::from_args();
+    let opts: Options = StructOpt::parse();
     let cfg_path = opts.workdir.join("client.json");
     let db_path = opts.workdir.join("client.db");
     let cfg: ClientConfig = load_from_file(&cfg_path);
@@ -177,7 +178,7 @@ fn serialize_coins(c: &Coins<SpendableCoin>) -> String {
     base64::encode(&bytes)
 }
 
-fn from_hex<D: Decodable>(s: &str) -> Result<D, Box<dyn Error>> {
-    let bytes = hex::decode(s)?;
-    Ok(D::consensus_decode(std::io::Cursor::new(bytes))?)
+fn from_hex<D: Decodable>(s: &str) -> Result<D, String> {
+    let bytes = hex::decode(s).expect("FromHexError");
+    Ok(D::consensus_decode(std::io::Cursor::new(bytes)).expect("DecodeError"))
 }
