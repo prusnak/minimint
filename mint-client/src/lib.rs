@@ -354,6 +354,9 @@ impl MintClient {
     }
 }
 
+// -> clientd
+// <- clientd
+
 #[derive(Error, Debug)]
 pub enum ClientError {
     #[error("Error querying federation: {0}")]
