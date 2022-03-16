@@ -9,6 +9,7 @@ use mint_client::mint::SpendableCoin;
 use mint_client::MintClient;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 //use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -178,7 +179,7 @@ fn serialize_coins(c: &Coins<SpendableCoin>) -> String {
     base64::encode(&bytes)
 }
 
-fn from_hex<D: Decodable>(s: &str) -> Result<D, String> {
-    let bytes = hex::decode(s).expect("FromHexError");
-    Ok(D::consensus_decode(std::io::Cursor::new(bytes)).expect("DecodeError"))
+fn from_hex<D: Decodable>(s: &str) -> Result<D, Box<dyn Error + Send + Sync + 'static>> {
+    let bytes = hex::decode(s)?;
+    Ok(D::consensus_decode(std::io::Cursor::new(bytes))?)
 }
