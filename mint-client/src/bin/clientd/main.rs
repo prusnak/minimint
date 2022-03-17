@@ -1,14 +1,8 @@
-use tide;
-use tide::Request;
-use tide::Response;
+use tide::{Request, Response, Body};
 use mint_client::{MintClient, ResBody,parse_coins, serialize_coins};
-use std::{path::PathBuf, sync::Arc};
-use std::borrow::BorrowMut;
-use std::sync::Mutex;
-use futures::future::err;
+use std::{path::PathBuf, sync::Arc, sync::Mutex};
 use minimint::config::{load_from_file, ClientConfig};
 use structopt::StructOpt;
-use tide::Body;
 use minimint_api::{Amount};
 use mint_client::mint::{SpendableCoin};
 use minimint::modules::mint::tiered::coins::Coins;
@@ -51,6 +45,7 @@ async fn main() -> tide::Result<()>{
     app.at("/reissue").post(reissue);
     app.at("/reissue_validate").post(reissue_validate);
     app.at("/pending").post(pending);
+    app.at("/events").post(events);
     app.listen("127.0.0.1:8080").await?;
     Ok(())
 }
@@ -139,10 +134,21 @@ async fn reissue(mut req: Request<State>) -> tide::Result {
     Ok(Response::new(200))
 }
 
+async fn events(req: Request<State>) -> tide::Result {
+    let mint_client = &req.state().mint_client;
+    let err_stack = Arc::clone(&req.state().err_stack);
+    let res = Body::from_json(&(*err_stack.lock().unwrap()).pop().unwrap()).unwrap();
+    Ok(res.into())
+}
+
 async fn fetch(mint_client : Arc<MintClient>, err_stack : Arc<Mutex<Vec<ResBody>>>) {
     //log the returned txids ?
     match mint_client.fetch_all_coins().await {
         Ok(_) => (), //Maybe instead of err_stack use a 'general' event_aggregator which stores err and succ events
         Err(e) => (*err_stack.lock().unwrap()).push(ResBody::Error {err : format!("{:?}", e)}),
     }
+}
+
+async fn test_eventsA(mint_client : Arc<MintClient>, err_stack : Arc<Mutex<Vec<ResBody>>>) {
+    (*err_stack.lock().unwrap()).push(ResBody::Error {err : format!("{:?}", "errrrrr".to_string())});
 }
