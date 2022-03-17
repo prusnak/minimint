@@ -381,6 +381,7 @@ pub enum ResBody {
     },
     Empty,
 }
+/// Holds quantity of coins per tier
 #[derive(Serialize, Deserialize)]
 pub struct CoinsByTier{
     tier : u64,
@@ -409,7 +410,7 @@ impl ResBody {
         ResBody::Reissue {out_point, status}
     }
 }
-//TODO: implement Disply trait for ResBody/CoinsByTier (for client-cli)
+//TODO: implement Display trait for ResBody/CoinsByTier (for client-cli)
 
 pub fn serialize_coins(c: &Coins<SpendableCoin>) -> String {
     let bytes = bincode::serialize(&c).unwrap();

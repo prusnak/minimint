@@ -133,5 +133,3 @@ async fn fetch(mint_client : Arc<MintClient>) {
         Err(_) => () //Send via channel to a logger ?
     }
 }
-
-
