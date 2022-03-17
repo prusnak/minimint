@@ -6,7 +6,7 @@ use minimint::modules::wallet::txoproof::TxOutProof;
 use minimint_api::encoding::Decodable;
 use minimint_api::Amount;
 use mint_client::mint::SpendableCoin;
-use mint_client::MintClient;
+use mint_client::{MintClient, parse_coins, serialize_coins};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -165,16 +165,6 @@ async fn main() {
             }
         }
     }
-}
-
-fn parse_coins(s: &str) -> Coins<SpendableCoin> {
-    let bytes = base64::decode(s).unwrap();
-    bincode::deserialize(&bytes).unwrap()
-}
-
-fn serialize_coins(c: &Coins<SpendableCoin>) -> String {
-    let bytes = bincode::serialize(&c).unwrap();
-    base64::encode(&bytes)
 }
 
 fn from_hex<D: Decodable>(s: &str) -> Result<D, Box<dyn Error>> {
