@@ -95,7 +95,7 @@ async fn spend(mut req: Request<State>) -> tide::Result {
 ///Endpoint:ReissueValidate starts reissuance and responds when accepted (blocking)
 async fn reissue_validate(mut req: Request<State>) -> tide::Result {
     let value : String = req.body_json().await?; //Approach B
-    let mint_client = &req.state().mint_client;
+    let mint_client = Arc::clone(&req.state().mint_client);
 
     let coins : Coins<SpendableCoin> = parse_coins(&value);
     let mut rng = rand::rngs::OsRng::new().unwrap();
@@ -105,28 +105,28 @@ async fn reissue_validate(mut req: Request<State>) -> tide::Result {
         Ok(s) => s
     };
     let body = Body::from_json(&ResBody::build_reissue(out_point, status))?;
-    let c = Arc::clone(&mint_client);
+
     let err_stack = Arc::clone(&req.state().err_stack);
     tokio::spawn(async move {
-        fetch(c, err_stack).await;
+        fetch(mint_client, err_stack).await;
     });
     Ok(body.into())
 }
 ///Endpoint:Reissue starts reissuance, the caller has to be aware that this might fail
 async fn reissue(mut req: Request<State>) -> tide::Result {
     let value : String = req.body_json().await?;
-    let mint_client = &req.state().mint_client;
+    let mint_client = Arc::clone(&req.state().mint_client);
     let err_stack = Arc::clone(&req.state().err_stack);
-    let mint_client_task = Arc::clone(&mint_client);
+    //let mint_client_task = Arc::clone(&mint_client);
     tokio::spawn(async move {
         let coins : Coins<SpendableCoin> = parse_coins(&value);
         let mut rng = rand::rngs::OsRng::new().unwrap();
-        let out_point = match mint_client_task.reissue(coins, &mut rng).await {
+        let out_point = match mint_client.reissue(coins, &mut rng).await {
             Ok(o) => o,
             Err(_) => return, //Send via channel to a logger ?
         };
-        match mint_client_task.fetch_tx_outcome(out_point.txid, true).await{
-            Ok(_) => fetch(mint_client_task, Arc::clone(&err_stack)).await,
+        match mint_client.fetch_tx_outcome(out_point.txid, true).await{
+            Ok(_) => fetch(mint_client, Arc::clone(&err_stack)).await,
             Err(e) => (*err_stack.lock().unwrap()).push(ResBody::Error {err : format!("{:?}", e)}), //this is notoriously ugly
         };
     });
@@ -135,8 +135,9 @@ async fn reissue(mut req: Request<State>) -> tide::Result {
 }
 
 async fn events(req: Request<State>) -> tide::Result {
-    let mint_client = &req.state().mint_client;
+    //note : I think if you crtl c in the reissue/fetch process it can breack things (unfetchable "lost coins")
     let err_stack = Arc::clone(&req.state().err_stack);
+    //unwrap NOT ok here
     let res = Body::from_json(&(*err_stack.lock().unwrap()).pop().unwrap()).unwrap();
     Ok(res.into())
 }
@@ -144,11 +145,7 @@ async fn events(req: Request<State>) -> tide::Result {
 async fn fetch(mint_client : Arc<MintClient>, err_stack : Arc<Mutex<Vec<ResBody>>>) {
     //log the returned txids ?
     match mint_client.fetch_all_coins().await {
-        Ok(_) => (), //Maybe instead of err_stack use a 'general' event_aggregator which stores err and succ events
+        Ok(_) => (*err_stack.lock().unwrap()).push(ResBody::build_spend("succsessfull fetch".to_owned())),
         Err(e) => (*err_stack.lock().unwrap()).push(ResBody::Error {err : format!("{:?}", e)}),
     }
-}
-
-async fn test_eventsA(mint_client : Arc<MintClient>, err_stack : Arc<Mutex<Vec<ResBody>>>) {
-    (*err_stack.lock().unwrap()).push(ResBody::Error {err : format!("{:?}", "errrrrr".to_string())});
 }
