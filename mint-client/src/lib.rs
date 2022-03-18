@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
 
 use bitcoin::{Address, Transaction};
@@ -357,7 +357,7 @@ impl MintClient {
 
 // -> clientd
 /// Holds all possible Responses of the RPC-CLient
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum ResBody {
     Info {
         coins : Vec<CoinsByTier>,
@@ -379,13 +379,14 @@ pub enum ResBody {
     EventDump {
         events : Vec<ResBody>,
     },
-    Error {
-        err : String,
+    Event {
+        time : u64,
+        msg : String
     },
     Empty,
 }
 /// Holds quantity of coins per tier
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CoinsByTier{
     tier : u64,
     quantity : usize,
@@ -411,6 +412,18 @@ impl ResBody {
 
     pub fn build_reissue(out_point : OutPoint, status : TransactionStatus) -> Self {
         ResBody::Reissue {out_point, status}
+    }
+    pub fn build_event(msg : String) -> Self{
+        let time = SystemTime::now();
+        let d = time.duration_since(UNIX_EPOCH).unwrap(); // hrmph - unwrap doesn't seem ideal
+        let time = (d.as_secs() as u64) * 1000 + (u64::from(d.subsec_nanos()) / 1_000_000);
+        ResBody::Event {time , msg}
+
+    }
+    pub fn build_event_dump(events : &mut Vec<ResBody>) -> Self {
+        let e = events.clone();
+        events.clear();
+        ResBody::EventDump {events : e}
     }
 }
 //TODO: implement Display trait for ResBody/CoinsByTier (for client-cli)
