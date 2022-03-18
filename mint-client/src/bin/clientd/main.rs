@@ -27,7 +27,7 @@ async fn main() -> tide::Result<()>{
     let db_path = opts.workdir.join("client.db");
     let cfg: ClientConfig = load_from_file(&cfg_path);
     let db = sled::open(&db_path)
-        .unwrap() //handle error ?
+        .unwrap()
         .open_tree("mint-client")
         .unwrap();
     let client = MintClient::new(cfg, Arc::new(db), Default::default());
@@ -69,8 +69,8 @@ async fn pending(req : Request<State>) -> tide::Result {
 async fn spend(mut req: Request<State>) -> tide::Result {
     let value : u64 = match req.body_json().await {
         Ok(i) => i,
-        Err(e) => { //Approach
-            let res = ResBody::Event {time : 0, msg : format!("{:?}", e)}; //this dosent seem right
+        Err(e) => {
+            let res = ResBody::build_event(format!("{:?}", e));
             //Will be always Ok so unwrap is ok
             let body = Body::from_json(&res).unwrap();
             return Ok(body.into());
@@ -83,7 +83,7 @@ async fn spend(mut req: Request<State>) -> tide::Result {
             ResBody::build_spend(serialize_coins(&outgoing_coins))
         }
         Err(e) => {
-            ResBody::Event {time : 0, msg : format!("{:?}", e)} //this dosent seem right
+            ResBody::build_event(format!("{:?}", e))
         }
     };
     //Unwrap ok
