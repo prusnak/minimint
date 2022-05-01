@@ -59,12 +59,13 @@ impl Database for MemDatabase {
 
     fn raw_apply_batch(&self, batch: DbBatch) -> Result<(), DatabaseError> {
         let batch: Vec<_> = batch.into();
+        let mut lock = self.data.lock().unwrap();
 
         for change in batch.iter() {
             match change {
                 BatchItem::InsertNewElement(element) => {
-                    if self
-                        .raw_insert_entry(&element.key.to_bytes(), element.value.to_bytes())?
+                    if lock
+                        .insert(element.key.to_bytes(), element.value.to_bytes())
                         .is_some()
                     {
                         error!("Database replaced element! This should not happen!");
@@ -72,16 +73,16 @@ impl Database for MemDatabase {
                     }
                 }
                 BatchItem::InsertElement(element) => {
-                    self.raw_insert_entry(&element.key.to_bytes(), element.value.to_bytes())?;
+                    lock.insert(element.key.to_bytes(), element.value.to_bytes());
                 }
                 BatchItem::DeleteElement(key) => {
-                    if self.raw_remove_entry(&key.to_bytes())?.is_none() {
+                    if lock.remove(&key.to_bytes()).is_none() {
                         error!("Database deleted absent element! This should not happen!");
                         trace!("Problematic key: {:?}", key);
                     }
                 }
                 BatchItem::MaybeDeleteElement(key) => {
-                    self.raw_remove_entry(&key.to_bytes())?;
+                    lock.remove(&key.to_bytes());
                 }
             }
         }

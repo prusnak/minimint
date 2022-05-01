@@ -26,6 +26,7 @@ use thiserror::Error;
 use tiered::coins::Coins;
 use tiered::coins::TieredMultiZip;
 pub use tiered::keys::Keys;
+use tokio::time::Instant;
 use tracing::{debug, error, warn};
 
 pub mod config;
@@ -34,12 +35,28 @@ mod db;
 /// Data structures taking into account different amount tiers
 pub mod tiered;
 
+#[derive(Debug)]
+pub struct LogEvent {
+    pub out_point: OutPoint,
+    pub peer: PeerId,
+    pub action: EventType,
+    pub time: Instant,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum EventType {
+    Submitted,
+    Agreed,
+    Final,
+}
+
 /// Federated mint member mint
 pub struct Mint {
     key_id: PeerId,
     sec_key: Keys<SecretKeyShare>,
     pub_key_shares: BTreeMap<PeerId, Keys<PublicKeyShare>>,
     pub_key: HashMap<Amount, AggregatePublicKey>,
+    event_logger: tokio::sync::mpsc::Sender<LogEvent>,
     threshold: usize, // TODO: move to cfg
     db: Arc<dyn Database>,
 }
@@ -82,7 +99,7 @@ pub struct VerificationCache {
     valid_coins: HashMap<Coin, Amount>,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl FederationModule for Mint {
     type Error = MintError;
     type TxInput = Coins<Coin>;
@@ -93,7 +110,7 @@ impl FederationModule for Mint {
 
     async fn consensus_proposal<'a>(
         &'a self,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) -> Vec<Self::ConsensusItem> {
         self.db
             .find_by_prefix(&ProposedPartialSignaturesKeyPrefix)
@@ -111,7 +128,7 @@ impl FederationModule for Mint {
         &'a self,
         mut batch: BatchTx<'a>,
         consensus_items: Vec<(PeerId, Self::ConsensusItem)>,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) {
         for (peer, partial_sig) in consensus_items {
             self.process_partial_signature(
@@ -221,6 +238,8 @@ impl FederationModule for Mint {
         output: &'a Self::TxOutput,
         out_point: OutPoint,
     ) -> Result<Amount, Self::Error> {
+        self.log_event(out_point, EventType::Agreed);
+
         // TODO: move actual signing to worker thread
         // TODO: get rid of clone
         let partial_sig = output
@@ -245,7 +264,7 @@ impl FederationModule for Mint {
     async fn end_consensus_epoch<'a>(
         &'a self,
         mut batch: BatchTx<'a>,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) {
         // Finalize partial signatures for which we now have enough shares
         let req_psigs = self
@@ -264,7 +283,7 @@ impl FederationModule for Mint {
                 let mut batch = DbBatch::new();
                 let mut batch_tx = batch.transaction();
 
-                if shares.len() > self.threshold {
+                if shares.len() >= self.threshold {
                     debug!(
                         "Trying to combine sig shares for issuance request {}",
                         issuance_id
@@ -288,6 +307,8 @@ impl FederationModule for Mint {
                                     peer_id: peer,
                                 })
                             }));
+
+                            self.log_event(issuance_id, EventType::Final);
 
                             batch_tx.append_insert(OutputOutcomeKey(issuance_id), blind_signature);
                             batch_tx.commit();
@@ -346,13 +367,28 @@ impl FederationModule for Mint {
 }
 
 impl Mint {
+    fn log_event(&self, out_point: OutPoint, action: EventType) {
+        futures::executor::block_on(self.event_logger.send(LogEvent {
+            out_point,
+            peer: self.key_id,
+            action,
+            time: Instant::now(),
+        }))
+        .unwrap();
+    }
+
     /// Constructs a new ming
     ///
     /// # Panics
     /// * If there are no amount tiers
     /// * If the amount tiers for secret and public keys are inconsistent
     /// * If the pub key belonging to the secret key share is not in the pub key list.
-    pub fn new(cfg: MintConfig, threshold: usize, db: Arc<dyn Database>) -> Mint {
+    pub fn new(
+        cfg: MintConfig,
+        threshold: usize,
+        db: Arc<dyn Database>,
+        log_events: tokio::sync::mpsc::Sender<LogEvent>,
+    ) -> Mint {
         assert!(cfg.tbs_sks.tiers().count() > 0);
 
         // The amount tiers are implicitly provided by the key sets, make sure they are internally
@@ -397,6 +433,7 @@ impl Mint {
             sec_key: cfg.tbs_sks,
             pub_key_shares: cfg.peer_tbs_pks,
             pub_key: aggregate_pub_keys,
+            event_logger: log_events,
             threshold,
             db,
         }

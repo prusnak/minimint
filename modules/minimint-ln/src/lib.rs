@@ -119,7 +119,7 @@ pub struct DecryptionShareCI {
     pub share: PreimageDecryptionShare,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl FederationModule for LightningModule {
     type Error = LightningModuleError;
     type TxInput = ContractInput;
@@ -130,7 +130,7 @@ impl FederationModule for LightningModule {
 
     async fn consensus_proposal<'a>(
         &'a self,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) -> Vec<Self::ConsensusItem> {
         self.db
             .find_by_prefix(&ProposeDecryptionShareKeyPrefix)
@@ -145,7 +145,7 @@ impl FederationModule for LightningModule {
         &'a self,
         mut batch: BatchTx<'a>,
         consensus_items: Vec<(PeerId, Self::ConsensusItem)>,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) {
         batch.append_from_iter(consensus_items.into_iter().filter_map(
             |(peer, decryption_share)| {
@@ -373,7 +373,7 @@ impl FederationModule for LightningModule {
     async fn end_consensus_epoch<'a>(
         &'a self,
         mut batch: BatchTx<'a>,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) {
         // Decrypt preimages
         let preimage_decraption_shares = self

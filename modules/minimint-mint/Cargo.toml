@@ -10,6 +10,7 @@ edition = "2018"
 async-trait = "0.1"
 bincode = "1.3.1"
 counter = "0.5.2"
+futures = "0.3.21"
 itertools = "0.10.0"
 minimint-api = { path = "../../minimint-api" }
 minimint-derive = { path = "../../minimint-derive" }
@@ -19,6 +20,7 @@ secp256k1-zkp = { git = "https://github.com/elsirion/rust-secp256k1-zkp", branch
 serde = { version = "1.0.118", features = [ "derive" ] }
 tbs = { path = "../../crypto/tbs" }
 thiserror = "1.0.23"
+tokio = "1.18.0"
 tracing ="0.1.22"
 
 [dev-dependencies]

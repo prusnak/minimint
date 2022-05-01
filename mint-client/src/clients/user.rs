@@ -19,6 +19,7 @@ use minimint_api::{Amount, TransactionId};
 use minimint_api::{OutPoint, PeerId};
 use rand::{CryptoRng, RngCore};
 use secp256k1_zkp::{All, Secp256k1};
+use std::sync::Mutex;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -26,10 +27,13 @@ const TIMELOCK: u64 = 100;
 
 pub struct UserClient {
     context: OwnedClientContext<ClientConfig>,
+    coins: Mutex<Vec<SpendableCoin>>,
+    amt: Amount,
 }
 
 impl UserClient {
     pub fn new(cfg: ClientConfig, db: Box<dyn Database>, secp: Secp256k1<All>) -> Self {
+        let amt = *cfg.mint.tbs_pks.keys.keys().next().unwrap();
         let api = api::HttpFederationApi::new(
             cfg.api_endpoints
                 .iter()
@@ -41,7 +45,7 @@ impl UserClient {
                 })
                 .collect(),
         );
-        Self::new_with_api(cfg, db, Box::new(api), secp)
+        Self::new_with_api(cfg, db, Box::new(api), secp, amt)
     }
 
     pub fn new_with_api(
@@ -49,6 +53,7 @@ impl UserClient {
         db: Box<dyn Database>,
         api: Box<dyn FederationApi>,
         secp: Secp256k1<All>,
+        amt: Amount,
     ) -> UserClient {
         UserClient {
             context: OwnedClientContext {
@@ -57,6 +62,8 @@ impl UserClient {
                 api,
                 secp,
             },
+            coins: Mutex::new(vec![]),
+            amt,
         }
     }
 
@@ -69,6 +76,9 @@ impl UserClient {
     fn mint_client(&self) -> MintClient {
         MintClient {
             context: self.context.borrow_with_module_config(|cfg| &cfg.mint),
+
+            coins: &self.coins,
+            amt: self.amt,
         }
     }
 
@@ -149,7 +159,7 @@ impl UserClient {
         &self,
         coins: Coins<SpendableCoin>,
         mut rng: R,
-    ) -> Result<OutPoint, ClientError> {
+    ) -> Result<minimint::transaction::Transaction, ClientError> {
         const OUT_IDX: u64 = 0;
 
         let mut batch = DbBatch::new();
@@ -186,18 +196,8 @@ impl UserClient {
             signature: Some(signature),
         };
 
-        let mint_tx_id = self.context.api.submit_transaction(transaction).await?;
-        // TODO: make check part of submit_transaction
-        assert_eq!(
-            txid, mint_tx_id,
-            "Federation is faulty, returned wrong tx id."
-        );
-
         self.context.db.apply_batch(batch).expect("DB error");
-        Ok(OutPoint {
-            txid,
-            out_idx: OUT_IDX,
-        })
+        Ok(transaction)
     }
 
     pub async fn peg_out<R: RngCore + CryptoRng>(
@@ -275,6 +275,16 @@ impl UserClient {
         Ok(())
     }
 
+    pub fn save_coins(&self, coins: Coins<SpendableCoin>) {
+        *self.coins.lock().unwrap() = coins
+            .into_iter()
+            .map(|(amt, coin)| {
+                assert_eq!(self.amt, amt);
+                coin
+            })
+            .collect();
+    }
+
     pub async fn fetch_all_coins<'a>(&self) -> Result<Vec<TransactionId>, MintClientError> {
         let mut batch = DbBatch::new();
         let res = self
@@ -289,7 +299,7 @@ impl UserClient {
         self.mint_client().coins()
     }
 
-    pub async fn fund_outgoing_ln_contract<R: RngCore + CryptoRng>(
+    pub async fn fund_outgoing_ln_contract<R: RngCore + CryptoRng + Send>(
         &self,
         gateway: &LightningGateway,
         invoice: Invoice,

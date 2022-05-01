@@ -15,15 +15,18 @@ use minimint_api::{Amount, OutPoint, TransactionId};
 use rand::{CryptoRng, Rng, RngCore};
 use secp256k1_zkp::{Secp256k1, Signing};
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use std::time::Duration;
 use tbs::{blind_message, unblind_signature, AggregatePublicKey, BlindedMessage, BlindingKey};
 use thiserror::Error;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 /// Federation module client for the Mint module. It can both create transaction inputs and outputs
 /// of the mint type.
 pub struct MintClient<'c> {
     pub context: BorrowedClientContext<'c, MintClientConfig>,
+    pub coins: &'c Mutex<Vec<SpendableCoin>>,
+    pub amt: Amount,
 }
 
 /// Client side representation of one coin in an issuance request that keeps all necessary
@@ -68,30 +71,21 @@ impl<'c> MintClient<'c> {
 
     // FIXME: implement three step process: unspent -> in flight -> spent/unspent
     pub fn mark_coins_spent(&self, mut batch: BatchTx, coins: &Coins<SpendableCoin>) {
-        batch.append_from_iter(coins.iter().map(|(amount, coin)| {
-            BatchItem::delete(CoinKey {
-                amount,
-                nonce: coin.coin.0.clone(),
-            })
-        }));
-        batch.commit();
+        panic!("not doing this")
     }
 
     pub fn select_and_spend_coins(
         &self,
         mut batch: BatchTx,
-        amount: Amount,
+        mut amount: Amount,
     ) -> Result<Coins<SpendableCoin>> {
-        let coins = self
-            .coins()
-            .select_coins(amount)
-            .ok_or(MintClientError::NotEnoughCoins)?;
-
-        // mark spent in DB
-        // TODO: make contingent on success of payment
-        self.mark_coins_spent(batch.subtransaction(), &coins);
-        batch.commit();
-        Ok(coins)
+        let mut lock = self.coins.lock().unwrap();
+        let mut res = Vec::new();
+        while amount > Amount::ZERO {
+            res.push(lock.pop().ok_or(MintClientError::NotEnoughCoins)?);
+            amount -= self.amt;
+        }
+        Ok(res.into_iter().map(|coin| (self.amt, coin)).collect())
     }
 
     // TODO: implement input generation with change to avoid error on missing coin denominations
@@ -209,6 +203,18 @@ impl<'c> MintClient<'c> {
         batch.commit();
 
         Ok(())
+    }
+
+    pub fn save_coins(&self, mut batch: BatchTx<'_>, coins: Coins<SpendableCoin>) {
+        batch.append_from_iter(coins.into_iter().map(|(amount, coin)| {
+            let key = CoinKey {
+                amount,
+                nonce: coin.coin.0.clone(),
+            };
+            let value = coin;
+            BatchItem::insert_new(key, value)
+        }));
+        batch.commit();
     }
 
     pub fn list_active_issuances(&self) -> Vec<OutPoint> {

@@ -35,7 +35,7 @@ pub mod config;
 
 pub mod outcome;
 /// Some abstractions to handle randomness
-mod rng;
+pub mod rng;
 pub mod transaction;
 
 pub mod modules {
@@ -46,183 +46,183 @@ pub mod modules {
 
 /// Start all the components of the mint and plug them together
 pub async fn run_minimint(cfg: ServerConfig) {
-    assert_eq!(
-        cfg.peers.keys().max().copied().map(|id| id.to_usize()),
-        Some(cfg.peers.len() - 1)
-    );
-    assert_eq!(cfg.peers.keys().min().copied(), Some(PeerId::from(0)));
-
-    let threshold = cfg.peers.len() - cfg.max_faulty();
-
-    let database: Arc<dyn Database> =
-        Arc::new(sled::open(&cfg.db_path).unwrap().open_tree("mint").unwrap());
-
-    let mint = minimint_mint::Mint::new(cfg.mint.clone(), threshold, database.clone());
-
-    let wallet = minimint_wallet::Wallet::new(cfg.wallet.clone(), database.clone())
-        .await
-        .expect("Couldn't create wallet");
-
-    let ln = LightningModule::new(cfg.ln.clone(), database.clone());
-
-    let mint_consensus = Arc::new(FediMintConsensus {
-        rng_gen: Box::new(CloneRngGen(Mutex::new(rand::rngs::OsRng::new().unwrap()))), //FIXME
-        cfg: cfg.clone(),
-        mint,
-        wallet,
-        ln,
-        db: database,
-    });
-
-    spawn(net::api::run_server(cfg.clone(), mint_consensus.clone()));
-
-    let (output_sender, mut output_receiver) = channel::<ConsensusOutcome>(1);
-    let (proposal_sender, proposal_receiver) = channel::<Vec<ConsensusItem>>(1);
-
-    info!("Spawning consensus with first proposal");
-    spawn_hbbft(
-        output_sender,
-        proposal_receiver,
-        cfg.clone(),
-        mint_consensus.get_consensus_proposal().await,
-        rand::rngs::OsRng::new().unwrap(),
-    )
-    .await;
-
-    // FIXME: reusing the wallet CI leads to duplicate randomness beacons, not a problem for change, but maybe later for other use cases
-    debug!("Generating second proposal");
-    let mut proposal = Some(mint_consensus.get_consensus_proposal().await);
-    loop {
-        debug!("Ready to exchange proposal for consensus outcome");
-
-        // We filter out the already agreed on consensus items from our proposal to avoid proposing
-        // duplicates. Yet we can not remove them from the database entirely because we might crash
-        // while processing the outcome.
-        let outcome = {
-            let outcome = output_receiver.recv().await.expect("other thread died");
-            let outcome_filter_set = outcome
-                .contributions
-                .values()
-                .flatten()
-                .filter(|ci| !matches!(ci, ConsensusItem::Wallet(_)))
-                .collect::<HashSet<_>>();
-
-            let full_proposal = proposal.take().expect("Is always refilled");
-            let filtered_proposal = full_proposal
-                .into_iter()
-                .filter(|ci| !outcome_filter_set.contains(ci))
-                .collect::<Vec<ConsensusItem>>();
-            proposal_sender
-                .send(filtered_proposal)
-                .await
-                .expect("other thread died");
-
-            outcome
-        };
-
-        let we_contributed = outcome.contributions.contains_key(&cfg.identity);
-
-        debug!(
-            "Processing consensus outcome from epoch {} with {} items",
-            outcome.epoch,
-            outcome.contributions.values().flatten().count()
+    /*assert_eq!(
+            cfg.peers.keys().max().copied().map(|id| id.to_usize()),
+            Some(cfg.peers.len() - 1)
         );
-        mint_consensus.process_consensus_outcome(outcome).await;
+        assert_eq!(cfg.peers.keys().min().copied(), Some(PeerId::from(0)));
 
-        if we_contributed {
-            // TODO: define latency target for consensus rounds and monitor it
-            // give others a chance to catch up
-            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-        }
+        let threshold = cfg.peers.len() - cfg.max_faulty();
 
-        proposal = Some(mint_consensus.get_consensus_proposal().await);
-    }
-}
+        let database: Arc<dyn Database> =
+            Arc::new(sled::open(&cfg.db_path).unwrap().open_tree("mint").unwrap());
 
-async fn spawn_hbbft(
-    outcome_sender: Sender<ConsensusOutcome>,
-    mut proposal_receiver: Receiver<Vec<ConsensusItem>>,
-    cfg: ServerConfig,
-    initial_cis: Vec<ConsensusItem>,
-    mut rng: impl RngCore + CryptoRng + Clone + Send + 'static,
-) -> JoinHandle<()> {
-    spawn(async move {
-        let mut connections = Connections::connect_to_all(&cfg).await;
+        let mint = minimint_mint::Mint::new(cfg.mint.clone(), threshold, database.clone());
 
-        let net_info = NetworkInfo::new(
-            cfg.identity,
-            cfg.hbbft_sks.inner().clone(),
-            cfg.hbbft_pk_set.clone(),
-            cfg.hbbft_sk.inner().clone(),
-            cfg.peers
-                .iter()
-                .map(|(id, peer)| (*id, peer.hbbft_pk))
-                .collect(),
-        );
+        let wallet = minimint_wallet::Wallet::new(cfg.wallet.clone(), database.clone())
+            .await
+            .expect("Couldn't create wallet");
 
-        let mut hb: HoneyBadger<Vec<ConsensusItem>, _> =
-            HoneyBadger::builder(Arc::new(net_info)).build();
-        info!("Created Honey Badger instance");
+        let ln = LightningModule::new(cfg.ln.clone(), database.clone());
 
-        let mut next_consensus_items = Some(initial_cis);
+        let mint_consensus = Arc::new(FediMintConsensus {
+            rng_gen: Box::new(CloneRngGen(Mutex::new(rand::rngs::OsRng::new().unwrap()))), //FIXME
+            cfg: cfg.clone(),
+            mint,
+            wallet,
+            ln,
+            db: database,
+        });
+
+        spawn(net::api::run_server(cfg.clone(), mint_consensus.clone()));
+
+        let (output_sender, mut output_receiver) = channel::<ConsensusOutcome>(1);
+        let (proposal_sender, proposal_receiver) = channel::<Vec<ConsensusItem>>(1);
+
+        info!("Spawning consensus with first proposal");
+        spawn_hbbft(
+            output_sender,
+            proposal_receiver,
+            cfg.clone(),
+            mint_consensus.get_consensus_proposal().await,
+            rand::rngs::OsRng::new().unwrap(),
+        )
+        .await;
+
+        // FIXME: reusing the wallet CI leads to duplicate randomness beacons, not a problem for change, but maybe later for other use cases
+        debug!("Generating second proposal");
+        let mut proposal = Some(mint_consensus.get_consensus_proposal().await);
         loop {
-            let contribution = next_consensus_items
-                .take()
-                .expect("This is always refilled");
+            debug!("Ready to exchange proposal for consensus outcome");
+
+            // We filter out the already agreed on consensus items from our proposal to avoid proposing
+            // duplicates. Yet we can not remove them from the database entirely because we might crash
+            // while processing the outcome.
+            let outcome = {
+                let outcome = output_receiver.recv().await.expect("other thread died");
+                let outcome_filter_set = outcome
+                    .contributions
+                    .values()
+                    .flatten()
+                    .filter(|ci| !matches!(ci, ConsensusItem::Wallet(_)))
+                    .collect::<HashSet<_>>();
+
+                let full_proposal = proposal.take().expect("Is always refilled");
+                let filtered_proposal = full_proposal
+                    .into_iter()
+                    .filter(|ci| !outcome_filter_set.contains(ci))
+                    .collect::<Vec<ConsensusItem>>();
+                proposal_sender
+                    .send(filtered_proposal)
+                    .await
+                    .expect("other thread died");
+
+                outcome
+            };
+
+            let we_contributed = outcome.contributions.contains_key(&cfg.identity);
 
             debug!(
-                "Proposing a contribution with {} consensus items for epoch {}",
-                contribution.len(),
-                hb.epoch()
+                "Processing consensus outcome from epoch {} with {} items",
+                outcome.epoch,
+                outcome.contributions.values().flatten().count()
             );
-            trace!("Contribution: {:?}", contribution);
-            let mut initial_step = Some(
-                hb.propose(&contribution, &mut rng)
-                    .expect("Failed to process HBBFT input"),
+            mint_consensus.process_consensus_outcome(outcome).await;
+
+            if we_contributed {
+                // TODO: define latency target for consensus rounds and monitor it
+                // give others a chance to catch up
+                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+            }
+
+            proposal = Some(mint_consensus.get_consensus_proposal().await);
+        }
+    }
+
+    async fn spawn_hbbft(
+        outcome_sender: Sender<ConsensusOutcome>,
+        mut proposal_receiver: Receiver<Vec<ConsensusItem>>,
+        cfg: ServerConfig,
+        initial_cis: Vec<ConsensusItem>,
+        mut rng: impl RngCore + CryptoRng + Clone + Send + 'static,
+    ) -> JoinHandle<()> {
+        spawn(async move {
+            let mut connections = Connections::connect_to_all(&cfg).await;
+
+            let net_info = NetworkInfo::new(
+                cfg.identity,
+                cfg.hbbft_sks.inner().clone(),
+                cfg.hbbft_pk_set.clone(),
+                cfg.hbbft_sk.inner().clone(),
+                cfg.peers
+                    .iter()
+                    .map(|(id, peer)| (*id, peer.hbbft_pk))
+                    .collect(),
             );
 
-            let outcome = 'inner: loop {
-                // We either want to handle the initial step or generate a new one by receiving a
-                // message from a peer
-                let Step {
-                    output,
-                    fault_log,
-                    messages,
-                } = match initial_step.take() {
-                    Some(step) => step,
-                    None => {
-                        let (peer, peer_msg) = connections.receive().await;
-                        trace!("Received message from {}", peer);
-                        hb.handle_message(&peer, peer_msg)
-                            .expect("Failed to process HBBFT input")
+            let mut hb: HoneyBadger<Vec<ConsensusItem>, _> =
+                HoneyBadger::builder(Arc::new(net_info)).build();
+            info!("Created Honey Badger instance");
+
+            let mut next_consensus_items = Some(initial_cis);
+            loop {
+                let contribution = next_consensus_items
+                    .take()
+                    .expect("This is always refilled");
+
+                debug!(
+                    "Proposing a contribution with {} consensus items for epoch {}",
+                    contribution.len(),
+                    hb.epoch()
+                );
+                trace!("Contribution: {:?}", contribution);
+                let mut initial_step = Some(
+                    hb.propose(&contribution, &mut rng)
+                        .expect("Failed to process HBBFT input"),
+                );
+
+                let outcome = 'inner: loop {
+                    // We either want to handle the initial step or generate a new one by receiving a
+                    // message from a peer
+                    let Step {
+                        output,
+                        fault_log,
+                        messages,
+                    } = match initial_step.take() {
+                        Some(step) => step,
+                        None => {
+                            let (peer, peer_msg) = connections.receive().await;
+                            trace!("Received message from {}", peer);
+                            hb.handle_message(&peer, peer_msg)
+                                .expect("Failed to process HBBFT input")
+                        }
+                    };
+
+                    for msg in messages {
+                        trace!("sending message to {:?}", msg.target);
+                        connections.send(msg.target, msg.message).await;
+                    }
+
+                    if !fault_log.is_empty() {
+                        warn!("Faults: {:?}", fault_log);
+                    }
+
+                    if !output.is_empty() {
+                        trace!("Processed step had an output, handing it off");
+                        break 'inner output;
                     }
                 };
 
-                for msg in messages {
-                    trace!("sending message to {:?}", msg.target);
-                    connections.send(msg.target, msg.message).await;
+                for batch in outcome {
+                    debug!("Exchanging consensus outcome of epoch {}", batch.epoch);
+                    // Old consensus contributions are overwritten on case of multiple batches arriving
+                    // at once. The new contribution should be used to avoid redundantly included items.
+                    outcome_sender.send(batch).await.expect("other thread died");
+                    next_consensus_items =
+                        Some(proposal_receiver.recv().await.expect("other thread died"));
                 }
-
-                if !fault_log.is_empty() {
-                    warn!("Faults: {:?}", fault_log);
-                }
-
-                if !output.is_empty() {
-                    trace!("Processed step had an output, handing it off");
-                    break 'inner output;
-                }
-            };
-
-            for batch in outcome {
-                debug!("Exchanging consensus outcome of epoch {}", batch.epoch);
-                // Old consensus contributions are overwritten on case of multiple batches arriving
-                // at once. The new contribution should be used to avoid redundantly included items.
-                outcome_sender.send(batch).await.expect("other thread died");
-                next_consensus_items =
-                    Some(proposal_receiver.recv().await.expect("other thread died"));
             }
-        }
-    })
+        })*/
 }
 
 struct CloneRngGen<T: RngCore + CryptoRng + Clone + Send>(Mutex<T>);

@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+    "benchmark",
     "crypto/tbs",
     "ln-gateway",
     "minimint",

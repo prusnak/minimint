@@ -67,7 +67,7 @@ struct VerificationCaches {
 
 impl<R> FediMintConsensus<R>
 where
-    R: RngCore + CryptoRng,
+    R: RngCore + CryptoRng + Send,
 {
     pub fn submit_transaction(
         &self,

@@ -38,7 +38,7 @@ pub struct ApiEndpoint<M> {
     pub handler: fn(&M, Params, serde_json::Value) -> http_types::Result<http_types::Response>,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait FederationModule: Sized {
     type Error;
     type TxInput: Send + Sync;
@@ -50,7 +50,7 @@ pub trait FederationModule: Sized {
     /// This module's contribution to the next consensus proposal
     async fn consensus_proposal<'a>(
         &'a self,
-        rng: impl RngCore + CryptoRng + 'a,
+        rng: impl RngCore + CryptoRng + Send + 'a,
     ) -> Vec<Self::ConsensusItem>;
 
     /// This function is called once before transaction processing starts. All module consensus
@@ -61,7 +61,7 @@ pub trait FederationModule: Sized {
         &'a self,
         batch: BatchTx<'a>,
         consensus_items: Vec<(PeerId, Self::ConsensusItem)>,
-        rng: impl RngCore + CryptoRng + 'a,
+        rng: impl RngCore + CryptoRng + Send + 'a,
     );
 
     /// Some modules may have slow to verify inputs that would block transaction processing. If the
@@ -127,7 +127,7 @@ pub trait FederationModule: Sized {
     async fn end_consensus_epoch<'a>(
         &'a self,
         batch: BatchTx<'a>,
-        rng: impl RngCore + CryptoRng + 'a,
+        rng: impl RngCore + CryptoRng + Send + 'a,
     );
 
     /// Retrieve the current status of the output. Depending on the module this might contain data

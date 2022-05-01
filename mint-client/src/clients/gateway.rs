@@ -76,11 +76,7 @@ impl GatewayClient {
     }
 
     fn mint_client(&self) -> MintClient {
-        MintClient {
-            context: self
-                .context
-                .borrow_with_module_config(|cfg| &cfg.common.mint),
-        }
+        panic!()
     }
 
     /// Fetch the specified outgoing payment contract account

@@ -35,7 +35,7 @@ impl<'c> LnClient<'c> {
         invoice: Invoice,
         gateway: &LightningGateway,
         timelock: u32,
-        mut rng: impl RngCore + CryptoRng + 'a,
+        mut rng: impl RngCore + CryptoRng + Send + 'a,
     ) -> Result<ContractOrOfferOutput> {
         let contract_amount = {
             let invoice_amount_msat = invoice

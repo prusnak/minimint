@@ -137,7 +137,7 @@ pub struct PegOut {
     pub amount: bitcoin::Amount,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl FederationModule for Wallet {
     type Error = WalletError;
     type TxInput = Box<PegInProof>;
@@ -149,7 +149,7 @@ impl FederationModule for Wallet {
 
     async fn consensus_proposal<'a>(
         &'a self,
-        mut rng: impl RngCore + CryptoRng + 'a,
+        mut rng: impl RngCore + CryptoRng + Send + 'a,
     ) -> Vec<Self::ConsensusItem> {
         // TODO: implement retry logic in case bitcoind is temporarily unreachable
         let our_network_height = self.btc_rpc.get_block_height().await as u32;
@@ -199,7 +199,7 @@ impl FederationModule for Wallet {
         &'a self,
         mut batch: BatchTx<'a>,
         consensus_items: Vec<(PeerId, Self::ConsensusItem)>,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) {
         trace!("Received consensus proposals {:?}", &consensus_items);
 
@@ -344,7 +344,7 @@ impl FederationModule for Wallet {
     async fn end_consensus_epoch<'a>(
         &'a self,
         mut batch: BatchTx<'a>,
-        _rng: impl RngCore + CryptoRng + 'a,
+        _rng: impl RngCore + CryptoRng + Send + 'a,
     ) {
         let round_consensus = match self.current_round_consensus() {
             Some(consensus) => consensus,
