@@ -15,9 +15,11 @@ mint-client = { path = "../mint-client" }
 rand = "0.6.5"
 rayon = "1.5.0"
 secp256k1-zkp = { git = "https://github.com/elsirion/rust-secp256k1-zkp", branch = "minimint", features = [ "global-context", "bitcoin_hashes" ] }
+sled = "0.34.7"
 statistical = "1.0.0"
 structopt = "0.3.26"
 tbs = { path = "../crypto/tbs" }
+tempdir = "0.3.7"
 tokio = { version = "1.0.1", features = ["full"] }
 tracing ="0.1.22"
 tracing-subscriber = { version = "0.3.1", features = [ "env-filter" ] }

@@ -25,6 +25,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use structopt::StructOpt;
 use tbs::{blind_message, combine_valid_shares, sign_blinded_msg, unblind_signature};
+use tempdir::TempDir;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::{spawn, JoinHandle};
 use tokio::time::Instant;
@@ -399,10 +400,16 @@ async fn main() {
     debug!("Isuing {} coins", coins_to_issue);
     let free_money = free_money(&server_cfg, coins_to_issue);
     debug!("Done!");
+    let tmp_dir = TempDir::new("minimint-bench").unwrap();
     let databases: BTreeMap<_, Arc<dyn Database>> = peers
         .iter()
         .map(|&peer| {
-            let db: Arc<dyn Database> = Arc::new(MemDatabase::new());
+            let db: Arc<dyn Database> = Arc::new(
+                sled::open(tmp_dir.path().join(format!("peer-{}", peer)))
+                    .unwrap()
+                    .open_tree("default")
+                    .unwrap(),
+            );
             (peer, db)
         })
         .collect();
