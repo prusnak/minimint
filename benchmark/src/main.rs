@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hbbft::honey_badger::{HoneyBadger, Step};
+use hbbft::honey_badger::{EncryptionSchedule, HoneyBadger, Step};
 use hbbft::{Epoched, Message, NetworkInfo, Target};
 use itertools::Itertools;
 use minimint::config::{ClientConfig, ServerConfig, ServerConfigParams};
@@ -168,8 +168,9 @@ async fn spawn_hbbft(
                 .collect(),
         );
 
-        let mut hb: HoneyBadger<Vec<ConsensusItem>, _> =
-            HoneyBadger::builder(Arc::new(net_info)).build();
+        let mut hb: HoneyBadger<Vec<ConsensusItem>, _> = HoneyBadger::builder(Arc::new(net_info))
+            .encryption_schedule(EncryptionSchedule::EveryNthEpoch(10))
+            .build();
         info!("Created Honey Badger instance");
 
         let mut next_consensus_items = Some(initial_cis);
