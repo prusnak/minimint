@@ -398,7 +398,7 @@ async fn main() {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,tide=error")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off")),
         )
         .init();
 
@@ -576,11 +576,7 @@ async fn main() {
         .unwrap();
 
     println!(
-        "Accept: {}s +- {}s, max {}s",
-        mean_accept, stddev_accept, max_accept
-    );
-    println!(
-        "Coins:  {}s +- {}s, max {}s",
-        mean_coin, stddev_coin, max_coins
+        "{} {} {} {} {} {}",
+        mean_accept, stddev_accept, max_accept, mean_coin, stddev_coin, max_coins
     );
 }
