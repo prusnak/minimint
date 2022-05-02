@@ -41,7 +41,7 @@ pub async fn run_minimint_node(
     cfg: ServerConfig,
     network: LatencyNetwork,
     database: Arc<dyn Database>,
-    submit_tx: tokio::sync::mpsc::Receiver<minimint::transaction::Transaction>,
+    submit_tx: tokio::sync::broadcast::Receiver<minimint::transaction::Transaction>,
     log_events: tokio::sync::mpsc::Sender<LogEvent>,
 ) {
     assert_eq!(
@@ -75,7 +75,7 @@ pub async fn run_minimint_node(
     let submit_mint = mint_consensus.clone();
     spawn(async move {
         let mut submit_tx = submit_tx;
-        while let Some(tx) = submit_tx.recv().await {
+        while let Ok(tx) = submit_tx.recv().await {
             submit_mint.submit_transaction(tx).unwrap();
         }
     });
@@ -105,28 +105,39 @@ pub async fn run_minimint_node(
         // while processing the outcome.
         let outcome = {
             let outcome = output_receiver.recv().await.expect("other thread died");
+            debug!(
+                "Received outcome containing {} items from {} peers for epoch {}",
+                outcome
+                    .contributions
+                    .values()
+                    .map(|c| c.len())
+                    .sum::<usize>(),
+                outcome.contributions.len(),
+                outcome.epoch
+            );
             let outcome_filter_set = outcome
                 .contributions
                 .values()
                 .flatten()
                 .filter(|ci| !matches!(ci, ConsensusItem::Wallet(_)))
                 .collect::<HashSet<_>>();
+            debug!("Constructing filter set");
 
             let full_proposal = proposal.take().expect("Is always refilled");
             let filtered_proposal = full_proposal
                 .into_iter()
                 .filter(|ci| !outcome_filter_set.contains(ci))
                 .collect::<Vec<ConsensusItem>>();
+            debug!("Filtered proposal");
+            let proposal_len = filtered_proposal.len();
             proposal_sender
                 .send(filtered_proposal)
                 .await
                 .expect("other thread died");
+            debug!("Sent new proposal containing {} items", proposal_len);
 
             outcome
         };
-
-        let we_contributed = outcome.contributions.contains_key(&cfg.identity);
-
         debug!(
             "Processing consensus outcome from epoch {} with {} items",
             outcome.epoch,
@@ -210,11 +221,13 @@ async fn spawn_hbbft(
                 }
             };
 
+            debug!("received {} batches", outcome.len());
             for batch in outcome {
                 debug!("Exchanging consensus outcome of epoch {}", batch.epoch);
                 // Old consensus contributions are overwritten on case of multiple batches arriving
                 // at once. The new contribution should be used to avoid redundantly included items.
                 outcome_sender.send(batch).await.expect("other thread died");
+                debug!("Awaiting proposal for next epoch");
                 next_consensus_items =
                     Some(proposal_receiver.recv().await.expect("other thread died"));
             }
@@ -236,8 +249,9 @@ pub struct LatencyNetwork {
     id: PeerId,
     offline_peers: Vec<PeerId>,
     latency: Duration,
-    peers: BTreeMap<PeerId, tokio::sync::mpsc::Sender<(PeerId, Instant, ConsensusMessage)>>,
-    receive: tokio::sync::mpsc::Receiver<(PeerId, Instant, ConsensusMessage)>,
+    peers:
+        BTreeMap<PeerId, tokio::sync::mpsc::UnboundedSender<(PeerId, Instant, ConsensusMessage)>>,
+    receive: tokio::sync::mpsc::UnboundedReceiver<(PeerId, Instant, ConsensusMessage)>,
 }
 
 #[async_trait]
@@ -251,19 +265,13 @@ impl PeerConnections<ConsensusMessage> for LatencyNetwork {
             Target::All => {
                 for (id, peer_conn) in self.peers.iter_mut() {
                     if !self.offline_peers.contains(&id) {
-                        peer_conn
-                            .send((self.id, delivery_at, msg.clone()))
-                            .await
-                            .unwrap();
+                        peer_conn.send((self.id, delivery_at, msg.clone())).unwrap();
                     }
                 }
             }
             Target::Node(peer) => {
                 if !self.offline_peers.contains(&peer) {
-                    self.peers[&peer]
-                        .send((self.id, delivery_at, msg))
-                        .await
-                        .unwrap();
+                    self.peers[&peer].send((self.id, delivery_at, msg)).unwrap();
                 }
             }
         }
@@ -285,7 +293,7 @@ fn start_latency_network(
     let (senders, receivers): (BTreeMap<_, _>, Vec<_>) = nodes
         .iter()
         .map(|&peer| {
-            let (send, receive) = tokio::sync::mpsc::channel(1024);
+            let (send, receive) = tokio::sync::mpsc::unbounded_channel();
             ((peer, send), (peer, receive))
         })
         .unzip();
@@ -368,7 +376,7 @@ struct Args {
     num_tx: usize,
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 128)]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let args: Args = StructOpt::from_args();
 
@@ -413,10 +421,7 @@ async fn main() {
             (peer, db)
         })
         .collect();
-    let (tx_senders, tx_receivers): (Vec<_>, Vec<_>) = peers
-        .iter()
-        .map(|_| tokio::sync::mpsc::channel(1024))
-        .unzip();
+    let (tx_sender, _tx_receiver) = tokio::sync::broadcast::channel(1024);
 
     let (event_send, mut event_recv) = tokio::sync::mpsc::channel::<LogEvent>(1024);
     let log_handle = tokio::spawn(async move {
@@ -427,7 +432,7 @@ async fn main() {
             }
 
             // 1 submit + n accept/coins
-            if logs.len() == (num_tx * (1 + 2 * num_peers)) {
+            if logs.len() == (num_tx * (1 + 2 * (num_peers - args.offline_peers))) {
                 break;
             }
         }
@@ -436,14 +441,13 @@ async fn main() {
 
     let fed = peers
         .iter()
-        .zip(tx_receivers)
-        .filter(|(peer, _)| !offline_peers.contains(*peer))
-        .map(|(peer, tx_receive)| {
+        .filter(|peer| !offline_peers.contains(*peer))
+        .map(|peer| {
             tokio::spawn(run_minimint_node(
                 server_cfg.remove(peer).unwrap(),
                 network.remove(peer).unwrap(),
                 databases[peer].clone(),
-                tx_receive,
+                tx_sender.subscribe(),
                 event_send.clone(),
             ))
         })
@@ -471,9 +475,7 @@ async fn main() {
             };
         let tx = mint_client.reissue(spend_coins, &mut rng).await.unwrap();
         let txid = tx.tx_hash();
-        for (id, sender) in tx_senders.iter().enumerate() {
-            sender.send(tx.clone()).await.unwrap();
-        }
+        tx_sender.send(tx).unwrap();
         event_send
             .send(LogEvent {
                 out_point: OutPoint { txid, out_idx: 0 },

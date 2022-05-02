@@ -27,7 +27,7 @@ use tiered::coins::Coins;
 use tiered::coins::TieredMultiZip;
 pub use tiered::keys::Keys;
 use tokio::time::Instant;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 pub mod config;
 
