@@ -42,7 +42,7 @@ pub async fn run_minimint_node(
     network: LatencyNetwork,
     database: Arc<dyn Database>,
     submit_tx: tokio::sync::broadcast::Receiver<minimint::transaction::Transaction>,
-    log_events: tokio::sync::mpsc::Sender<LogEvent>,
+    log_events: tokio::sync::mpsc::UnboundedSender<LogEvent>,
 ) {
     assert_eq!(
         cfg.peers.keys().max().copied().map(|id| id.to_usize()),
@@ -423,12 +423,15 @@ async fn main() {
         .collect();
     let (tx_sender, _tx_receiver) = tokio::sync::broadcast::channel(1024);
 
-    let (event_send, mut event_recv) = tokio::sync::mpsc::channel::<LogEvent>(1024);
-    let log_handle = tokio::spawn(async move {
+    let (event_send, mut event_recv) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
+    let log_handle = tokio::task::spawn(async move {
         let mut logs = Vec::with_capacity(3 * num_peers * num_tx);
         loop {
             if let Some(log) = event_recv.recv().await {
                 logs.push(log);
+            } else {
+                warn!("revent pipe broke");
+                break;
             }
 
             // 1 submit + n accept/coins
@@ -483,7 +486,6 @@ async fn main() {
                 action: EventType::Submitted,
                 time: Instant::now(),
             })
-            .await
             .unwrap();
         debug!("Submitted tx");
     }

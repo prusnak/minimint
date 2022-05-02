@@ -56,7 +56,7 @@ pub struct Mint {
     sec_key: Keys<SecretKeyShare>,
     pub_key_shares: BTreeMap<PeerId, Keys<PublicKeyShare>>,
     pub_key: HashMap<Amount, AggregatePublicKey>,
-    event_logger: tokio::sync::mpsc::Sender<LogEvent>,
+    event_logger: tokio::sync::mpsc::UnboundedSender<LogEvent>,
     threshold: usize, // TODO: move to cfg
     db: Arc<dyn Database>,
 }
@@ -368,13 +368,14 @@ impl FederationModule for Mint {
 
 impl Mint {
     fn log_event(&self, out_point: OutPoint, action: EventType) {
-        futures::executor::block_on(self.event_logger.send(LogEvent {
-            out_point,
-            peer: self.key_id,
-            action,
-            time: Instant::now(),
-        }))
-        .unwrap();
+        self.event_logger
+            .send(LogEvent {
+                out_point,
+                peer: self.key_id,
+                action,
+                time: Instant::now(),
+            })
+            .unwrap();
     }
 
     /// Constructs a new ming
@@ -387,7 +388,7 @@ impl Mint {
         cfg: MintConfig,
         threshold: usize,
         db: Arc<dyn Database>,
-        log_events: tokio::sync::mpsc::Sender<LogEvent>,
+        log_events: tokio::sync::mpsc::UnboundedSender<LogEvent>,
     ) -> Mint {
         assert!(cfg.tbs_sks.tiers().count() > 0);
 
