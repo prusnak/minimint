@@ -25,6 +25,7 @@ pub async fn run_server(cfg: ServerConfig, minimint: Arc<MinimintConsensus<rand:
     let mut server = tide::with_state(state);
     server.at("/transaction").put(submit_transaction);
     server.at("/transaction/:txid").get(fetch_outcome);
+    server.at("/transaction/test/:txid").get(fetch_outcome);
 
     attach_module_endpoints(&mut server, &minimint.wallet);
     attach_module_endpoints(&mut server, &minimint.mint);
