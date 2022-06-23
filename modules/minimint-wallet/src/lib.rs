@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
+
 use std::hash::Hasher;
 use std::sync::Arc;
 
@@ -37,6 +38,8 @@ use rand::{CryptoRng, Rng, RngCore};
 use secp256k1::Message;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
+
+use minimint_api::task::sleep;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, trace, warn};
@@ -165,13 +168,24 @@ impl FederationModule for Wallet {
     type ConsensusItem = WalletConsensusItem;
     type VerificationCache = ();
 
+    async fn await_consensus_proposal<'a>(&'a self, rng: impl RngCore + CryptoRng + 'a) -> () {
+        let mut our_target_height = self.target_height().await;
+        let last_consensus_height = self.consensus_height().unwrap_or(0);
+
+        if self.consensus_proposal(rng).await.len() == 1 {
+            while our_target_height <= last_consensus_height {
+                our_target_height = self.target_height().await;
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
     async fn consensus_proposal<'a>(
         &'a self,
         mut rng: impl RngCore + CryptoRng + 'a,
     ) -> Vec<Self::ConsensusItem> {
         // TODO: implement retry logic in case bitcoind is temporarily unreachable
-        let our_network_height = self.btc_rpc.get_block_height().await as u32;
-        let our_target_height = our_network_height.saturating_sub(self.cfg.finalty_delay);
+        let our_target_height = self.target_height().await;
 
         // In case the wallet just got created the height is not committed to the DB yet but will
         // be set to 0 first, so we can assume that here.
@@ -732,6 +746,11 @@ impl Wallet {
         self.db.get_value(&RoundConsensusKey).expect("DB error")
     }
 
+    pub async fn target_height(&self) -> u32 {
+        let our_network_height = self.btc_rpc.get_block_height().await as u32;
+        our_network_height.saturating_sub(self.cfg.finalty_delay)
+    }
+
     pub fn consensus_height(&self) -> Option<u32> {
         self.current_round_consensus().map(|rc| rc.block_height)
     }
@@ -1206,7 +1225,7 @@ pub enum WalletError {
     #[error("Unknown block hash in peg-in proof: {0}")]
     UnknownPegInProofBlock(BlockHash),
     #[error("Invalid peg-in proof: {0}")]
-    PegInProofError(#[from] PegInProofError),
+    PegInProofError(PegInProofError),
     #[error("The peg-in was already claimed")]
     PegInAlreadyClaimed,
 }
@@ -1227,6 +1246,12 @@ pub enum ProcessPegOutSigError {
     MissingOrMalformedChangeTweak,
     #[error("Error finalizing PSBT {0}")]
     ErrorFinalizingPsbt(miniscript::psbt::Error),
+}
+
+impl From<PegInProofError> for WalletError {
+    fn from(e: PegInProofError) -> Self {
+        WalletError::PegInProofError(e)
+    }
 }
 
 // FIXME: make FakeFed not require Eq
