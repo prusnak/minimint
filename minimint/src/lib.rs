@@ -1,8 +1,6 @@
 extern crate minimint_api;
 
-use futures::future::{select_all, FutureExt};
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use hbbft::honey_badger::{HoneyBadger, Message};
@@ -192,12 +190,11 @@ impl MinimintServer {
     }
 
     async fn await_proposal_or_peer_message(&mut self) -> Option<PeerMessage> {
-        let awaits: Vec<Pin<Box<dyn Future<Output = Option<PeerMessage>>>>> = vec![
-            Box::pin(self.consensus.transaction_notify.notified().map(|_| None)),
-            Box::pin(self.consensus.await_consensus_proposal().map(|_| None)),
-            Box::pin(self.connections.receive().map(Some)),
-        ];
-        select_all(awaits).await.0
+        tokio::select! {
+            () = self.consensus.transaction_notify.notified() => None,
+            () = self.consensus.await_consensus_proposal() => None,
+            msg = self.connections.receive() => Some(msg)
+        }
     }
 
     /// Runs a single HBBFT consensus step
